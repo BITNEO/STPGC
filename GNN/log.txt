@@ -1,4 +1,0 @@
-/home/wuxiang/strong_collapse/hyperparameter_study/Cora_0.50_400_15_15split_All_Simplex_3.npytotal time 0.44616246223449707
-./Reduced_Node_Data/Cora_0.50_400_15_15split_All_Simplex_3.npytotal time 0.4548304080963135
-./Reduced_Node_Data/Cora_0.50_split_All_Simplex_3.npytotal time 0.46636128425598145
-./Reduced_Node_Data/Cora_0.50_split_All_Simplex.npytotal time 2.79105281829834
