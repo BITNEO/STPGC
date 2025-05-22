@@ -15,6 +15,9 @@ python train.py --dataname Cora
 ```
 ### **2. PH computation**
 1.download dataset 
+
+REDDIT5K: https://chrsmrrs.github.io/datasets/docs/home/
+
 Malnet-tiny：http://malnet.cc.gatech.edu/graph-data/
 
 Oregon:https://snap.stanford.edu/data/Oregon-1.html
