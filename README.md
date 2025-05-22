@@ -14,7 +14,7 @@ To train a model (e.g.GCN) on the coarsened graph:
 python train.py --dataname Cora
 ```
 ### **2. PH computation**
-1.download dataset 
+1.Download dataset 
 
 REDDIT5K: https://chrsmrrs.github.io/datasets/docs/home/
 
