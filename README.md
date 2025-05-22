@@ -14,3 +14,13 @@ To train a model (e.g.GCN) on the coarsened graph:
 python train.py --dataname Cora
 ```
 ### **2. PH computation**
+1.download dataset 
+Malnet-tiny：http://malnet.cc.gatech.edu/graph-data/
+Oregon:https://snap.stanford.edu/data/Oregon-1.html
+Enron:https://snap.stanford.edu/data/email-Enron.html
+P2P:https://snap.stanford.edu/data/p2p-Gnutella31.html
+2.Unzip dataset in PH_data/{dataname}
+3.Run experiment
+```bash
+python ripser_experiment.py --dataname {dataname}
+```
