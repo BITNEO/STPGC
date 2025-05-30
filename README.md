@@ -18,8 +18,6 @@ python train.py --dataname Cora
 
 REDDIT5K: https://chrsmrrs.github.io/datasets/docs/home/
 
-Malnet-tiny：http://malnet.cc.gatech.edu/graph-data/
-
 Oregon:https://snap.stanford.edu/data/Oregon-1.html
 
 Enron:https://snap.stanford.edu/data/email-Enron.html
