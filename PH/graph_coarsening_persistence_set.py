@@ -1,5 +1,4 @@
 import torch
-from torch_geometric.datasets import Planetoid,ZINC,TUDataset
 import networkx as nx
 import numpy as np
 from torch_geometric.utils import to_networkx
@@ -7,17 +6,15 @@ from collections import deque
 import torch_geometric.transforms as T
 import matplotlib.pyplot as plt
 from scipy.sparse import eye, coo_matrix,triu,diags
-from torch_geometric.datasets import CitationFull
+
 import time
 import copy
-# 加载 Cora 数据集
-# edge collapse of a flag complex
-# 只取第一个图数据
+
 from torch_geometric.utils import to_networkx
 import random
 import heapq
 import tracemalloc
-
+from scipy.sparse import csr_matrix
 def draw_graph(edges,i): 
     # filtered_adj_matrix = collapsed_M[~deleted_node, :]  # 删除行
     # filtered_adj_matrix = filtered_adj_matrix[:, ~deleted_node]
@@ -272,24 +269,27 @@ def visual_graph(M,save_name):
 
 
 class CoreAlgorithm:
-    def __init__(self, M, data,keep_nodes, filtration_value_dict,reduction_ratio,node_label,dataname = "default",save = True,degree_threshold = 5,degree_threshold2 = 5):   
+    def __init__(self, M, node_degree, filtration_value_dict,keep_nodes,reduction_ratio,dataname = "default",save = True,degree_threshold = 5,degree_threshold2 = 5,require_edge = True):      
 
-        tracemalloc.start()
-        self.data = data
+        #tracemalloc.start(
         self.M = M
         #self.original_M = M.copy()
         # self.adj_2_hop = M @ M
         #self.adj_2_hop = self.adj_2_hop.tolil()
         
         self.keep_nodes = keep_nodes
-        self.list_of_set = []
-        for i in range(M.shape[0]):
-            self.list_of_set.append(set(M.rows[i]))
+       
+        self.list_of_set = [set(row) for row in M.rows]
+        self.require_edge = require_edge
+        self.delete_obj = len(self.list_of_set)*reduction_ratio
         
-        self.deleted_to_remain = {v: v for v in keep_nodes}
+
+        self.deleted_to_remain = dict(zip(keep_nodes, keep_nodes))
         self.num_remain_nodes = len(self.keep_nodes)
         
-        self.deleted_node = np.array([False for i in range(M.shape[0])])
+        self.deleted_node =  np.full(M.shape[0], False, dtype=bool)
+  
+  
         #draw_graph(adj,-1)
         self.dataname = dataname
         # for i in keep_nodes:
@@ -297,17 +297,19 @@ class CoreAlgorithm:
 
         self.filtration_value_dict = filtration_value_dict        
 
-        self.node_degree = np.array([M.getrow(i).nnz for i in range(M.shape[0])])
-        self.need_delete = deque()
+        #M_csr = M.tocsr()
+        self.node_degree = node_degree
+        #self.node_degree = np.array([M.getrow(i).nnz for i in range(M.shape[0])])
+        #self.need_delete = deque()
         #self.node_queue = deque(keep_nodes)
         self.edge_queue = deque()
         self.round = 0
         self.finish = False
         self.insert_dominated_edge = False
-        self.keep_mask = ~(copy.deepcopy(self.deleted_node))
+        #self.keep_mask = ~(copy.deepcopy(self.deleted_node))
 
         self.heruistic_delete = False
-        self.label = node_label
+        #self.label = node_label
         self.heruistic_delete_deg3 = False
         self.save = save
        
@@ -320,9 +322,15 @@ class CoreAlgorithm:
         
         self.finish1 = False
         self.finish2 = False
-      
+
+        self.remain_edges = set()
+
+        #self.remain_edges = self.get_all_edges_set()
+        edges = self.get_all_edges()
+        for e in edges:    
+            self.remain_edges.add(e)
         
-       
+        self.edge_num = len(self.remain_edges)*2
        
         self.isfirst = True
         self.finish_reduction = False
@@ -332,12 +340,12 @@ class CoreAlgorithm:
         self.insert_dominated_node= dict()
         #self.filters = {}
         #self.initilize_bloom_filter()
-        current, peak = tracemalloc.get_traced_memory()
+        #current, peak = tracemalloc.get_traced_memory()
     
-        peak = peak / 1024 ** 2
-        tracemalloc.stop() 
+        peak = 0
+        #tracemalloc.stop() 
         self.max_mem = peak
-        self.inserted_edges = {}
+        #self.inserted_edges = {}
     
     def get_filtration_value_dict(self):
         return self.filtration_value_dict
@@ -756,7 +764,37 @@ class CoreAlgorithm:
                 old_to_new[v] = key
         return new_to_old,old_to_new,supernode_label
 
-
+    def is_dominated_edge_return_node(self,e):
+        NG_e0 = self.list_of_set[e[0]]
+            
+        NG_e1 = self.list_of_set[e[1]]
+        NG_e = self.sorted_list_intersection_with_deleted_set(NG_e0, NG_e1,e)
+        #NG_e = [n for n in NG_e if (n not in e and self.deleted_node[n] == False)]
+        NG_e = [n for n in NG_e if n not in e ]
+        if len(NG_e) == 0:
+            return False,0,NG_e
+        if len(NG_e) == 1:
+            return True,NG_e[0],NG_e
+        is_dominated = True
+        max_degree_node = max(NG_e, key=lambda n: self.node_degree[n])
+        if self.node_degree[max_degree_node] < len(NG_e):
+            return False,0,NG_e
+        for w in NG_e:
+            is_dominated=True
+            #NG_w = self.M.rows[w]
+            for n in NG_e:
+                if w not in self.list_of_set[n]:
+                    is_dominated = False
+                    break
+                
+            if is_dominated == False:
+                continue
+            else:
+                is_dominated = True
+                return True,w,NG_e
+        if is_dominated == False:
+            return False,0,NG_e
+    
     
     def initilized_node_label_dict(self,new_to_old,old_to_new,edges):
         num_nodes = len(new_to_old)
@@ -1072,7 +1110,6 @@ class CoreAlgorithm:
         
         collapse_count = dict()
         st_time = time.time()
-        self.deleted_node_list = dict()
        
         last_num_nodes = self.num_remain_nodes
         #print(f"round {self.round} strong collapse, node_num {len(self.node_queue)}")
@@ -1085,15 +1122,15 @@ class CoreAlgorithm:
             #     print(len(self.node_queue))
 
             v = self.node_queue.popleft()
-            
-            pushed_nodes.remove(v)
-            if self.isfirst == False and self.heruistic_delete == False and v not  in self.potential_node_set:
+            if self.deleted_node[v]:
                 continue
+            pushed_nodes.remove(v)
+           
             if  self.node_degree[v]>self.degree_threshold:
                 continue
 
-            
-            
+            if self.num_remain_nodes < self.delete_obj:
+                break
             
            
             if self.deleted_node[v]:
@@ -1107,28 +1144,36 @@ class CoreAlgorithm:
             for w in NG_v:
                 if w == v or self.deleted_node[w] or self.node_degree[w] < self.node_degree[v]:
                     continue
-                if self.node_degree[v] > 3 and self.node_degree[v] <  self.node_degree[w]:
-                    continue 
+                # if self.node_degree[v] > 3 :
+                #     continue 
                 NG_w = self.list_of_set[w]
 
                 #if len(self.sorted_list_intersection_with_deleted(NG_v, NG_w)) == self.node_degree[v]:
                 
-                if self.is_subset_with_deleted_set(NG_v, NG_w,w):
+                if self.is_subset_with_deleted_set(NG_v, NG_w,w) :
                     # if self.node_degree[v] > 3:
                     #     print(v)
                     
-                    
-                    if self.node_degree[v]>3:
-                        ng= list(NG_v)
-                        ng.remove(v)
-                        for i in range(len(ng)):
-                            for j in range(i+1,len(ng)):
-                                if ng[j] in self.M.rows[ng[i]]:
-                                    if (ng[i],ng[j]) in self.filtration_value_dict:
-                                        other_node = ng[i] if ng[j] == w else ng[j]
-                                        if self.filtration_value_dict[(ng[i],ng[j])] > self.filtration_value_dict[(other_node,v)]:
-                                            self.filtration_value_dict[(ng[i],ng[j])] = self.filtration_value_dict[(other_node,v)]
-                                            self.filtration_value_dict[(ng[j],ng[i])] = self.filtration_value_dict[(other_node,v)]
+                    if self.node_degree[v]>3 and v < w :
+                        #print(self.node_degree[v])
+                        
+                        
+                        
+                        for a in NG_v:
+                            if a == w or a==v:
+                                continue
+                            if (w,a) in self.filtration_value_dict:
+                                if self.filtration_value_dict[(w,a)] > v:
+                                    self.filtration_value_dict[(w,a)] = v
+                                    self.filtration_value_dict[(a,w)] = v
+                        # for i in range(len(ng)):
+                        #     for j in range(i+1,len(ng)):
+                        #         if ng[j] in self.M.rows[ng[i]]:
+                        #             if (ng[i],ng[j]) in self.filtration_value_dict:
+                        #                 other_node = ng[i] if ng[j] == w else ng[j]
+                        #                 if self.filtration_value_dict[(ng[i],ng[j])] > v:
+                        #                     self.filtration_value_dict[(ng[i],ng[j])] = v
+                        #                     self.filtration_value_dict[(ng[j],ng[i])] = v
                     self.deleted_node[v] = True
                     #self.need_delete.append(v)
                     self.node_degree[v] = 1
@@ -1141,7 +1186,8 @@ class CoreAlgorithm:
                     for neighbor in NG_v:
                         if not self.deleted_node[neighbor]:
                             self.node_degree[neighbor] -= 1
-                            
+                            # if self.isfirst == False:
+                            #     self.potential_node.add(neighbor)
                             #self.potential_node.append(neighbor)
                             if neighbor not in pushed_nodes:
                                 pushed_nodes.add(neighbor)
@@ -1155,135 +1201,59 @@ class CoreAlgorithm:
         #self.delayed_delete()
         #self.potential_node_set = set(self.potential_node)
         #self.potential_node = []
+        #self.potential_edge = set()
         num_remain_nodes = self.num_remain_nodes
         ed_time = time.time()
         print(f"round {self.round} strong collapse: {ed_time-st_time}s, reduce_nodes total {len((self.keep_nodes))-self.num_remain_nodes}, reduce nodes this round {last_num_nodes-num_remain_nodes} remain_nodes {self.num_remain_nodes}")
-        if last_num_nodes - num_remain_nodes < 1:
-            self.insert_dominated_edge = True
+        # if last_num_nodes - num_remain_nodes < 10:
+        #     self.insert_dominated_edge = True
             
-            if self.heruistic_delete:
-                self.strong_tolerance+=1
-                print(f"strong tolerance +1 {self.strong_tolerance}")
+        #     if self.heruistic_delete:
+        #         self.strong_tolerance+=1
+        #         print(f"strong tolerance +1 {self.strong_tolerance}")
             
-            return 
-        else:
-            self.finish	 = False
-            return 
+        #     return 
+        # else:
+        #     self.finish	 = False
+        #     return 
         
-    def strong_collapse_relaxed(self):
-        st = time.time()
-        # node_queue 是 keep nodes 中 deleted_node = False 的节点
-        node_queue = deque([n for n in self.keep_nodes if not self.deleted_node[n]])
-
-
-        
-        pushed_nodes = set( list(node_queue))
-        #print(2034 in pushed_nodes)
-        
-        
-        st_time = time.time()
-
-        last_num_nodes = self.num_remain_nodes
-        print(f"round {self.round} strong collapse relaxed, node_num {len(node_queue)}")
-        while node_queue:
-            self.round += 1
-            if self.round % 10000 == 0:
-                ed = time.time()
-                print("round {} strong collapse relaxed : {}".format(round,ed-st))
-                st = ed
-                print(len(node_queue))
-            
-            v = node_queue.popleft()
-
-            if self.node_degree[v] > 4:
-                continue
-            
-            pushed_nodes.remove(v)
-            
-            if self.deleted_node[v]:
-                continue
-            
-            NG_v = self.M.rows[v].copy()
-            NG_v.remove(v)
-            NG_v_2hop = self.adj_2_hop.rows[v]
-            
-            # label_v = self.node_label[v]
-            # label_NG_v = self.node_label[NG_v]
-            # score = abs(label_NG_v - label_v)
-            # sorted_NG_v = [x for x, y in sorted(zip(NG_v, score), key=lambda pair: pair[1])]
-            # NG_v = sorted_NG_v
-            NG_v_2hop = list(set(NG_v_2hop))
-            for w in NG_v_2hop:
-                if self.deleted_node[w] or self.node_degree[w] < self.node_degree[v] or    w == v:
-                    continue
-                NG_w = self.M.rows[w]
-                if self.is_subset_with_deleted(NG_v, NG_w):
-                    
-                    self.deleted_node[v] = True
-                    self.need_delete.append(v)
-                    self.node_degree[v] = 1
-                    
-                    self.label_list[w]+=self.label_list[v]
-                    
-                        
-                    self.node_feature[w] = self.node_feature[w] + self.node_feature[v]
-                    self.conain_node[w] = self.conain_node[w] + self.conain_node[v] 
-                    self.deleted_to_remain[v] = w
-                    self.num_remain_nodes -= 1
-                    if self.num_remain_nodes <= self.reduction_object:
-                        self.finish_reduction = True
-                        return 
-
-                    for neighbor in NG_v:
-                        if not self.deleted_node[neighbor]:
-                            self.node_degree[neighbor] -= 1
-                            self.potential_node.append(neighbor)
-                            if neighbor not in pushed_nodes:
-                                pushed_nodes.add(neighbor)
-                                node_queue.append(neighbor)
-                    break
-        self.delayed_delete()
-        self.potential_node_set = set(self.potential_node)
-        self.potential_node = []
-        num_remain_nodes = self.num_remain_nodes
-        ed_time = time.time()
-        print(f"round {self.round} strong collapse relaxed: {ed_time-st_time}s, reduce_nodes total {len((self.keep_nodes))-self.num_remain_nodes}, reduce nodes this round {last_num_nodes-num_remain_nodes} remain_nodes {self.num_remain_nodes}")
-        if last_num_nodes == num_remain_nodes:
-            self.finish2 = True            
-            return 
-        else:
-            self.finish2 = False 
-            return 
-        
+    
     
 
 
     def edge_collapse(self):
-        
+        t0 = time.time()
+        edges = list(self.remain_edges)
+        self.edge_queue = deque(edges)
         pushed_edges = set(self.edge_queue)
         round = 0
         intersection_time = 0
         st = time.time()
-        self.deleted_edges = {}
         count = dict()
         dominate_count = dict()
         deleted_edges = 0
-        self.delete_edge_list = []
+        
+        # edges = self.get_all_edges()
+        # self.edge_queue = deque(edges)
+        # print(len(self.edge_queue))
+        #delelted_edges_list = []
         while self.edge_queue:
             round += 1
-            if round % 10000 == 0:
+            if round % 1000000 == 0:
                 ed = time.time()
-                print("round {} edge collapse: {} intersection time {}".format(round,ed-st,intersection_time))
+                print("round {} edge collapse: {} intersection time {} delete edge {}".format(round,ed-st,intersection_time,deleted_edges))
                 intersection_time = 0
                 st = ed
             
             e = self.edge_queue.popleft()
-            # if (e[0] == 27 and e[1] == 147) or (e[0] == 147 and e[1] == 27):
-            #     print(e)
-            if self.node_degree[e[0]] + self.node_degree[e[1]] >30:
+            if self.deleted_node[e[0]] or self.deleted_node[e[1]]:
+                continue
+            if e not in self.remain_edges:
+                continue
+            if self.node_degree[e[0]] + self.node_degree[e[1]] >2*self.degree_threshold:
                 continue
             if self.isfirst ==False:
-                if e[0] not in self.potential_node_set or e[1] not in self.potential_node_set:
+                if e[0] not in self.potential_node or e[1] not in self.potential_node:
                     continue
             try:
                 pushed_edges.remove(e)
@@ -1291,68 +1261,64 @@ class CoreAlgorithm:
                 pushed_edges.remove((e[1], e[0]))
             if e[0] == e[1]:
                 continue
-            NG_e0 = self.M.rows[e[0]]
+            NG_e0 = self.list_of_set[e[0]]
             
-            NG_e1 = self.M.rows[e[1]]
+            NG_e1 = self.list_of_set[e[1]]
             
-            #print(e)
             t1 = time.time()
-            NG_e = self.sorted_list_intersection_with_deleted(NG_e0, NG_e1)
-            #NG_e = self.intersect_simd(NG_e0, NG_e1)
-            NG_e = [n for n in NG_e if n not in e]
-            t2 = time.time()
-            intersection_time += (t2-t1)
-            if len(NG_e) == 0:
-                continue
-            is_dominated = False
-            max_degree_node = max(NG_e, key=lambda n: self.node_degree[n])
-            if self.node_degree[max_degree_node] < len(NG_e):
-                continue
-            #edge_set = set(self.M.rows[max_degree_node])
-            
-            if len(NG_e) == 1:
-                is_dominated = True
-                dominate_node = NG_e[0]
-            else:
-                for w in NG_e:
-                    NG_w = self.M.rows[w]
-                    if self.is_subset_with_deleted(NG_e, NG_w):
-                        is_dominated = True
-                        dominate_node = w
-                        break
+            is_dominated,dominating_node,NG_e = self.is_dominated_edge_return_node(e)
+            #is_dominated_1 = self.is_dominated_edge(e)
+            # if is_dominated_1 != is_dominated:
+            #     print("error")
             if is_dominated: # e is dominated
-                if self.node_degree[dominate_node] > 3:
-                    continue
-                self.M[e[0], e[1]] = False
-                self.M[e[1], e[0]] = False
+                if self.filtration_value_dict[e] < dominating_node:
+                    for  n in NG_e:
+                        self.filtration_value_dict[(dominating_node,n)] = dominating_node
+                        
+                        self.filtration_value_dict[(n,dominating_node)] = dominating_node
+                    for n in [e[0],e[1]]:
+                        self.filtration_value_dict[(n,dominating_node)] = dominating_node
+                        self.filtration_value_dict[(dominating_node,n)] = dominating_node
+                # self.M[e[0], e[1]] = False
+                # self.M[e[1], e[0]] = False
+                # self.remain_edges.remove(e)
+                # self.remain_edges.remove((e[1], e[0]))
+                self.list_of_set[e[0]].remove(e[1])
+                self.list_of_set[e[1]].remove(e[0])
                 self.node_degree[e[0]] -= 1
                 self.node_degree[e[1]] -= 1
+                self.remain_edges.remove(e)
+                #delelted_edges_list.append(e)
                 deleted_edges += 1
 
-                filtration_value = self.filtration_value_dict[e]
-                if self.filtration_value_dict[(dominate_node,e[0])] > filtration_value:
-                    self.filtration_value_dict[(dominate_node,e[0])] = filtration_value
-                    self.filtration_value_dict[(e[0],dominate_node)] = filtration_value
-                if self.filtration_value_dict[(dominate_node,e[1])] > filtration_value:
-                    self.filtration_value_dict[(e[1],dominate_node)] = filtration_value
-                    self.filtration_value_dict[(dominate_node,e[1])] = filtration_value
+                # filtration_value = self.filtration_value_dict[e]
+                # if self.filtration_value_dict[(dominating_node,e[0])] > filtration_value:
+                #     self.filtration_value_dict[(dominating_node,e[0])] = filtration_value
+                #     self.filtration_value_dict[(e[0],dominating_node)] = filtration_value
+                # if self.filtration_value_dict[(dominating_node,e[1])] > filtration_value:
+                #     self.filtration_value_dict[(e[1],dominating_node)] = filtration_value
+                #     self.filtration_value_dict[(dominating_node,e[1])] = filtration_value
+
                 for neighbor_e in NG_e0:
-                    if e[0]!=e[1] and self.M[e[0], neighbor_e] and (e[0], neighbor_e) not in pushed_edges and (neighbor_e,e[0])  not in pushed_edges:
+                    if e[0]!=e[1] and self.deleted_node[neighbor_e]==False and e[0] in self.list_of_set[neighbor_e] and (e[0], neighbor_e) not in pushed_edges and (neighbor_e,e[0])  not in pushed_edges:
                         self.edge_queue.append((e[0], neighbor_e))
                         pushed_edges.add((e[0], neighbor_e))
-                        self.potential_node.append(neighbor_e)
+                        # self.potential_edge.add(neighbor_e)
                 for neighbor_e in NG_e1:
-                    if e[0] != e[1] and self.M[e[1], neighbor_e] and (e[1], neighbor_e) not in pushed_edges and (neighbor_e,e[1]) not in pushed_edges:
+                    if e[0] != e[1] and self.deleted_node[neighbor_e]==False  and e[1] in self.list_of_set[neighbor_e]  and (e[1], neighbor_e) not in pushed_edges and (neighbor_e,e[1]) not in pushed_edges:
                         self.edge_queue.append((e[1], neighbor_e))
                         pushed_edges.add((e[1], neighbor_e))
-                        self.potential_node.append(neighbor_e)
-                self.deleted_edges[e] = dominate_node
-        self.potential_node_set = set(self.potential_node)
-        self.potential_node = []  
+                        # self.potential_edge.add(neighbor_e)
+                #self.deleted_edges[e] = max_degree_node
+        self.potential_node = set()
+        #self.potential_node = []  
         print(count) 
         print(dominate_count) 
-        #num_ramain_edge = len(self.get_all_edges())    
-        print("end edge collapse,  delete edges, {} ".format(deleted_edges))
+        #num_ramain_edge = len(self.get_all_edges()) 
+        t1 = time.time()   
+        print("end edge collapse,  delete edges, {}, time{} ".format(deleted_edges,t1-t0))
+        # if deleted_edges < 10:
+        #     self.insert_dominated_edge = True
     
 
    
@@ -1362,7 +1328,7 @@ class CoreAlgorithm:
         delete_node = False
         last_num_nodes = self.num_remain_nodes
         print("insert dominated edges")
-        add_edge_dominate_node = dict()
+        #add_edge_dominate_node = dict()
         for k in self.keep_nodes:
             if self.deleted_node[k]:
                 continue
@@ -1375,8 +1341,8 @@ class CoreAlgorithm:
                     NG_e1 = self.list_of_set[other_node[1]]
                     NG_e = self.sorted_list_intersection_with_deleted_set(NG_e0, NG_e1,(other_node[0],other_node[1]))
                     if len(NG_e) == 1:
-                        a = self.node_degree[other_node[0]]
-                        b = self.node_degree[other_node[1]] 
+                        #a = self.node_degree[other_node[0]]
+                        #b = self.node_degree[other_node[1]] 
                         delete_node = True
                         self.list_of_set[other_node[0]].add(other_node[1])
                         self.list_of_set[other_node[1]].add(other_node[0]) 
@@ -1390,7 +1356,7 @@ class CoreAlgorithm:
                         
                         self.num_remain_nodes -= 1
 
-                       
+
                         maximunm = max(self.filtration_value_dict[(other_node[0],k)],self.filtration_value_dict[(other_node[1],k)])
                         #print(e)
                         #print(self.inserted_edges[e])
@@ -1401,16 +1367,14 @@ class CoreAlgorithm:
                         # else:
                         #     self.deleted_to_remain[k] = other_node[1]
 
-                        if self.label[k] == self.label[other_node[0] ]:
-                            self.deleted_to_remain[k] = other_node[0] 
+                        
+                        self.deleted_to_remain[k] = other_node[0] 
                             
                             #self.label_list[other_node[0]]+=self.label_list[k]
                             
                             #self.node_feature[other_node[0]] = self.node_feature[other_node[0]] + self.node_feature[k]
                             #self.conain_node[other_node[1]] = self.conain_node[other_node[1]] + self.conain_node[k] 
-                        else:
-                            self.deleted_to_remain[k] = other_node[1]
-                            
+                        
                             #self.label_list[other_node[1]]+=self.label_list[k]
                             
                             #self.node_feature[other_node[1]] = self.node_feature[other_node[1]] + self.node_feature[k]
@@ -1424,8 +1388,8 @@ class CoreAlgorithm:
                         #     self.finish = True
                         #     return
         #self.delayed_delete()
-        self.heruistic_delete = True
-        self.node_queue = deque(list(set(self.node_queue)))
+        #self.heruistic_delete = True
+        #self.node_queue = deque(list(set(self.node_queue)))
         print("end insert dominated node,  node remain {} delete {} this round ".format(self.num_remain_nodes,last_num_nodes-self.num_remain_nodes)) 
         # self.strong_collapse()
         # self.edge_collapse()
@@ -1503,6 +1467,8 @@ class CoreAlgorithm:
             for i in range(len(other_node)):
                 NG_i = [n for n in self.list_of_set[other_node[i]] if self.deleted_node[n] == False]
                 add_edge = []
+                add_edge_np = np.empty((11, 2), dtype=np.int32)
+                current_index = 0
                 dominate_flag = True # check if other_node[i] can connect to other nodes
                 add_edge_dominate_node = dict()
                 if self.node_degree[other_node[i]] >= self.node_degree[k] and self.node_degree[k]>3:
@@ -1523,7 +1489,7 @@ class CoreAlgorithm:
                         if len(NG_e1) != 1:
                             flag2 = False
                             for a in NG_e1:
-                                if self.is_subset_with_deleted(NG_e1, self.M.rows[a]):
+                                if self.is_subset_with_deleted_set(NG_e1, self.M.rows[a],a):
                                     flag2 = True
                                     break
                             # if self.is_subset_with_deleted(NG_e1, self.M.rows[k]):
@@ -1534,11 +1500,15 @@ class CoreAlgorithm:
                                 break
                             else:
                                 
-                                add_edge.append((other_node[i],other_node[j]))
+                                #add_edge.append((other_node[i],other_node[j]))
+                                add_edge_np[current_index] = [other_node[i], other_node[j]]
+                                current_index += 1
                                 add_edge_dominate_node[(other_node[i],other_node[j])] = a
                                 
                         else:
-                            add_edge.append((other_node[i],other_node[j]))
+                            #add_edge.append((other_node[i],other_node[j]))
+                            add_edge_np[current_index] = [other_node[i], other_node[j]]
+                            current_index += 1
                             add_edge_dominate_node[(other_node[i], other_node[j])] = k
                 if dominate_flag == False:
                     continue
@@ -1555,6 +1525,7 @@ class CoreAlgorithm:
                 else:
                     degree[self.node_degree[k]] += 1
                 delete_node = True
+                add_edge = add_edge_np[:current_index]
                 #self.M.rows[651]
                 for e in add_edge:
                     self.list_of_set[e[0]].add(e[1])
@@ -1563,31 +1534,31 @@ class CoreAlgorithm:
                     self.node_degree[e[1]] += 1
                     #self.inserted_edges[e] = add_edge_dominate_node[e]
 
-                if self.node_degree[k] > 3:
-                    if len(add_edge) +self.node_degree[dominating_node]>self.node_degree[k]  : #or len(add_edge) < self.node_degree[k] - 2
-                        continue
+                #if self.node_degree[k] > 3:
+                    # if len(add_edge) +self.node_degree[dominating_node]>self.node_degree[k]  : #or len(add_edge) < self.node_degree[k] - 2
+                    #     continue
                     #print(f"degree {self.node_degree[k]}, len add {len(add_edge)} ---------------------------------------------------------------------------------------------")
                     #print(k)
-                    for e in add_edge:
-                        oth_node = e[1] if e[0] == dominating_node else e[0]
-                        self.filtration_value_dict[e] = self.filtration_value_dict[(k,oth_node)]
-                        self.filtration_value_dict[(e[1],e[0])] = self.filtration_value_dict[(k,oth_node)]
-                        if add_edge_dominate_node[e] != k:
-                            print(f" add_edge_dominate_node {add_edge_dominate_node[e]} k {k}")
-                            if not self.is_subset_with_deleted(NG_e1, self.M.rows[k]):
-                                print("e is not dominated by k")
+                    # for e in add_edge:
+                    #     oth_node = e[1] if e[0] == dominating_node else e[0]
+                    #     self.filtration_value_dict[e] = self.filtration_value_dict[(k,oth_node)]
+                    #     self.filtration_value_dict[(e[1],e[0])] = self.filtration_value_dict[(k,oth_node)]
+                        # if add_edge_dominate_node[(e[0],e[1])] != k:
+                        #     print(f" add_edge_dominate_node {add_edge_dominate_node[e]} k {k}")
+                        #     if not self.is_subset_with_deleted(NG_e1, self.M.rows[k]):
+                        #         print("e is not dominated by k")
                             
-                    if len(add_edge) < self.node_degree[k] - 2:
-                        ng =list(self.list_of_set[k])
-                        ng.remove(k)
-                        for i in range(len(ng)):
-                            for j in range(i+1,len(ng)):
-                                if ng[j] in self.M.rows[ng[i]]:
-                                    if (ng[i],ng[j]) in self.filtration_value_dict:
-                                        oth_node = ng[i] if ng[j] == dominating_node else ng[j]
-                                        if self.filtration_value_dict[(ng[i],ng[j])] > self.filtration_value_dict[(oth_node,k)]:
-                                            self.filtration_value_dict[(ng[i],ng[j])] = self.filtration_value_dict[(oth_node,k)]
-                                            self.filtration_value_dict[(ng[j],ng[i])] = self.filtration_value_dict[(oth_node,k)]
+                    #if len(add_edge) < self.node_degree[k] - 2:
+                ng =list(self.list_of_set[k])
+                ng.remove(k)
+                #print(self.node_degree[k])
+                for i in range(len(ng)):
+                    if ng[i] == dominating_node:
+                        continue
+                    if (dominating_node,ng[i]) in self.filtration_value_dict:
+                        if self.filtration_value_dict[(dominating_node,ng[i])] > k:
+                            self.filtration_value_dict[(dominating_node,ng[i])] = k
+                            self.filtration_value_dict[(ng[i],dominating_node)] = k
                         # maximunm = max(self.filtration_value_dict[(k,oth_node)],self.filtration_value_dict[(dominating_node,k)])
                         # self.filtration_value_dict[e] = maximunm
                         # self.filtration_value_dict[(e[1],e[0])] = maximunm
@@ -1595,16 +1566,16 @@ class CoreAlgorithm:
                     #     continue
                     #self.insert_dominated_node[k] = dominating_node
                 
-                else:
-                    for e in add_edge:
-                        maximunm = max(self.filtration_value_dict[(e[0],add_edge_dominate_node[e])],self.filtration_value_dict[(e[1],add_edge_dominate_node[e])])
-                        #print(e)
-                        #print(self.inserted_edges[e])
-                        self.filtration_value_dict[e] = maximunm
-                        self.filtration_value_dict[(e[1],e[0])] = maximunm
+                # else:
+                #     for e in add_edge:
+                #         #print(e)
+                #         #print(self.inserted_edges[e])
+                #         if 
+                #         self.filtration_value_dict[e] = maximunm
+                #         self.filtration_value_dict[(e[1],e[0])] = maximunm
                 
                 self.deleted_node[k] = True
-                self.need_delete.append(k)
+                #self.need_delete.append(k)
                 self.node_degree[k] = 1
                
                 
@@ -1649,125 +1620,7 @@ class CoreAlgorithm:
 
         return
 
-    # memorize the non dominated edges
-    def insert_dominated_edges_3(self):
-        delete_node = False
-        st = time.time()
-        last_num_nodes = self.num_remain_nodes
-        print("insert dominated edges")
-        dominate_edge_dict = dict()
-        degree = dict()
-        for k in self.keep_nodes: 
-            if self.deleted_node[k]:
-                continue
-            NG_row = self.M.rows[k]
-            if self.node_degree[k] <=2:
-                continue
-            
-            other_node = [n for n in NG_row if n != k and self.deleted_node[n] == False]
-            flag = False
-        
-            
-            for i in range(len(other_node)):
-                NG_i = [n for n in self.M.rows[other_node[i]] if self.deleted_node[n] == False]
-                add_edge = []
-                dominate_flag = True # check if other_node[i] can connect to other nodes
-                for j in range(len(other_node)):
-                    if j == i:
-                        continue
-                    if self.M[other_node[i],other_node[j]] == False:
-                        if (other_node[i],other_node[j]) in dominate_edge_dict:
-                            dominate_flag = False
-                            break
-                        NG_j = [n for n in self.M.rows[other_node[j]] if self.deleted_node[n] == False]
-                        NG_e1 = self.sorted_list_intersection_with_deleted(NG_i, NG_j)
-
-                        # if len(NG_e1) != 1:
-                        #     dominate_flag = False
-                                
-                        #     break
-                        if len(NG_e1) != 1:
-                            flag2 = False
-                            for a in NG_e1:
-                                if self.is_subset_with_deleted(NG_e1, self.M.rows[a]):
-                                    flag2 = True
-                                    break
-                            if flag2 == False:
-                                dominate_flag = False
-                                dominate_edge_dict[(other_node[i],other_node[j])] = False
-                                dominate_edge_dict[(other_node[j],other_node[i])] = False
-                                break
-                            else:
-                                
-                                add_edge.append((other_node[i],other_node[j]))
-                            
-                        else:
-                            add_edge.append((other_node[i],other_node[j]))
-                if dominate_flag == False:
-                    continue
-                else:
-                    flag = True
-                    dominating_node = other_node[i]
-                if flag == True:
-                    break
-            if flag==False:
-                continue
-            else:
-                if self.node_degree[k] not in  degree:
-                    degree[self.node_degree[k]] = 1
-                else:
-                    degree[self.node_degree[k]] += 1
-                delete_node = True
-                for e in add_edge:
-                    self.M[e[0], e[1]] = True
-                    self.M[e[1], e[0]] = True
-                    self.node_degree[e[0]] += 1
-                    self.node_degree[e[1]] += 1
-                self.deleted_node[k] = True
-                self.need_delete.append(k)
-                self.node_degree[k] = 1
-                
-                self.num_remain_nodes -= 1
-        
-                if self.label[k] == self.label[other_node[0] ]:
-                    self.deleted_to_remain[k] = other_node[0] 
-                    
-                    self.label_list[other_node[0]]+=self.label_list[k]
-                    
-                    self.node_feature[other_node[0]] = self.node_feature[other_node[0]] + self.node_feature[k]
-                    self.conain_node[other_node[1]] = self.conain_node[other_node[1]] + self.conain_node[k] 
-                else:
-                    self.deleted_to_remain[k] = other_node[1]
-                    
-                    self.label_list[other_node[1]]+=self.label_list[k]
-                    
-                    self.node_feature[other_node[1]] = self.node_feature[other_node[1]] + self.node_feature[k]
-                    self.conain_node[other_node[1]] = self.conain_node[other_node[1]] + self.conain_node[k]
-                #self.deleted_to_remain[k] = other_node[0]
-                #print(self.num_reduced_node)
-                #self.edge_queue.append((other_node[0],other_node[1]))
-                for neighbor in self.M.rows[k]:
-                    if self.deleted_node[neighbor] == False:
-                        self.node_degree[neighbor] -= 1
-                        
-                        #self.node_queue.append(neighbor)
-                
-                if self.num_remain_nodes <= self.reduction_object:
-                    self.finish = True
-                    return
-        self.delayed_delete()
-        print(degree)
-        ed = time.time()
-        self.heruistic_delete = True
-        self.node_queue = deque(list(set(self.node_queue)))
-        print("end insert dominated node,  node remain {} delete {} this round , time cost {}".format(self.num_remain_nodes,last_num_nodes-self.num_remain_nodes,ed-st)) 
-        # self.strong_collapse()
-        # self.edge_collapse()
-        if delete_node == False:
-            self.finish1 = True
-
-        return
-
+    
     
 
 
@@ -1927,106 +1780,61 @@ class CoreAlgorithm:
             elem = map[elem]
         return elem
 
-    def make_coarsened_graph(self):
-        old_to_new = {}
-        res = copy.deepcopy(self.data)
-
-        for elem in self.deleted_to_remain.keys():
-            root = self.find_root(self.deleted_to_remain, elem)
-            self.deleted_to_remain[elem] = root
+    # def make_coarsened_graph(self):
+    #     old_to_new = {}
         
-        edge_list = []
-        new_node_num = sum(self.deleted_node == False)
-        #res.new_x = torch.zeros(new_node_num, self.data.x.shape[1])
+        
+    #     edge_list =np.empty((self.M.shape[0]*20, 2), dtype=np.int32)
+    #     new_node_num = sum(self.deleted_node == False)
+    #     #res.new_x = torch.zeros(new_node_num, self.data.x.shape[1])
+    #     index = 0
+
+    #     # 映射未删除节点到新的节点编号
+    #     for i, v in enumerate(self.deleted_node):
+    #         if v == False :
+    #             old_to_new[i] = index
+    #             index += 1
+
+     
+    #     index = 0
+    #     filtration_value_dict_new = dict()
+    #     for i in range(self.M.shape[0]):
+    #         if self.deleted_node[i] == False:
+    #             for j in self.M.rows[i]:
+    #                 if i != j and self.deleted_node[j] == False:
+    #                     edge_list[index]=[old_to_new[i], old_to_new[j]] 
+    #                     index += 1  
+    #                     filtration_value_dict_new[(old_to_new[i], old_to_new[j])] = self.filtration_value_dict[(i,j)]
+    #                     filtration_value_dict_new[(old_to_new[j], old_to_new[i])] = self.filtration_value_dict[(i,j)]
+        
+    #     edge_list = edge_list[:index]
+        
+    #     return filtration_value_dict_new,edge_list,new_node_num
+    def make_coarsened_graph(self):
+        # 向量化 old_to_new 映射构建
+        mask = ~self.deleted_node
+        new_node_num = np.count_nonzero(mask)
+        old_to_new_arr = np.full_like(self.deleted_node, fill_value=-1, dtype=np.int32)
+        old_to_new_arr[mask] = np.arange(new_node_num, dtype=np.int32)
+
+        edge_list = np.empty((len(self.list_of_set)* self.edge_num, 2), dtype=np.int32)
+        filtration_value_dict_new = {}
         index = 0
 
-        # 映射未删除节点到新的节点编号
-        for i, v in enumerate(self.deleted_node):
-            if v == False and self.keep_mask[i] == True:
-                old_to_new[i] = index
-                index += 1
+        # 主循环优化：只遍历保留节点
+        for i in np.flatnonzero(mask):
+            row = self.list_of_set[i]
+            for j in row:
+                if i != j and mask[j]:
+                    ni, nj = old_to_new_arr[i], old_to_new_arr[j]
+                    edge_list[index] = [ni, nj]
+                    filtration_value = self.filtration_value_dict.get((i, j), 0.0)
+                    filtration_value_dict_new[(ni, nj)] = filtration_value
+                    filtration_value_dict_new[(nj, ni)] = filtration_value
+                    index += 1
 
-        # # 映射删除的节点到最终保留的节点编号
-        # for i, v in enumerate(self.deleted_node):
-        #     if v == True and self.keep_mask[i] == True:
-        #         old_to_new[i] = old_to_new[self.deleted_to_remain[i]]
-
-        # # 创建新的节点到旧节点的映射
-        # new_to_old = {}
-        # for k, v in old_to_new.items():
-        #     if v not in new_to_old.keys():
-        #         new_to_old[v] = [k]
-        #     else:
-        #         new_to_old[v].append(k)
-        
-        # # 添加边到新图中
-        filtration_value_dict_new = dict()
-        for i in range(self.M.shape[0]):
-            if self.deleted_node[i] == False:
-                for j in self.M.rows[i]:
-                    if i != j and self.deleted_node[j] == False:
-                        edge_list.append([old_to_new[i], old_to_new[j]])
-                        filtration_value_dict_new[(old_to_new[i], old_to_new[j])] = self.filtration_value_dict[(i,j)]
-                        filtration_value_dict_new[(old_to_new[j], old_to_new[i])] = self.filtration_value_dict[(i,j)]
-        
-        
-        # edge_list = np.array(edge_list).T
-
-              
-        
-        # # 计算新图的节点特征x为旧节点特征的平均
-        # for v in new_to_old.keys():
-        #     res.new_x[v] = torch.mean(self.data.x[new_to_old[v]], dim=0)
-
-        # # 重置无关数据
-        
-        # res.x, res.y, res.edge_index, res.train_mask, res.val_mask, res.test_mask = 0, 0, 0, 0, 0, 0
-        
-        # res.new_edge_index = torch.tensor(edge_list, dtype=torch.long)
-
-        
-        # old_to_new = dict(sorted(old_to_new.items(), key=lambda item: item[1]))
-        
-        # adj_matrix_sparse =  build_sparse_adjacency_matrix(edge_list, len(new_to_old))
-        # adj_matrix_sparse = adj_matrix_sparse.tolil()
-
-        # supernode_label = dict()
-        # label_list = dict()
-        
-
-        
-        # for key,value in new_to_old.items():
-        #     value_filtered = [v for v in value if not self.test_mask[v]]
-        #     label_list[key] = self.label[value_filtered].numpy()
-        
-        
-
-
-        # for key,value in label_list.items():
-        #     if len(value) == 0:
-        #         supernode_label[key] = 0
-        #         continue
-        #     values, counts = np.unique(value, return_counts=True)
-
-        #     # 找出出现次数最多的元素
-        #     max_label = values[np.argmax(counts)]
-        #     supernode_label[key] = max_label
-
-        
-        # res.node_label = supernode_label
-
-        # # homo = 0
-        # # for e in res.new_edge_index.T:
-        # #     if self.test_mask[int(e[0])] != -1  and self.test_mask[int(e[1])]!=-1:
-        # #         if supernode_label[int(e[0])] == supernode_label[int(e[1])]: 
-        # #             homo += 1
-        # # print(f"homo {homo/res.new_edge_index.shape[1]}")
-        # # 保存结果
-        # filename = f'/home/wuxiang/strong_collapse/Reduced_Node_Data/{self.dataname}_{self.reduction_ratio:.2f}_split_All_Simplex_1.npy'
-        # np.save(filename, (res.cpu(), old_to_new))
-        # print(f"Saved to {filename}")
-        return filtration_value_dict_new,edge_list,new_node_num
-
+        edge_list = edge_list[:index]
+        return filtration_value_dict_new, edge_list, new_node_num
     
     def get_all_edges(self):
         upper_triangle = triu(self.M, k=1)
@@ -2048,202 +1856,85 @@ class CoreAlgorithm:
         
         return compute_betti_numbers(filtered_adj_matrix)
     
-    # def revise_strong_collapse_persistence(self):
-    #     for node in self.deleted_node_list:
-            
-                
-    #             # edge = list(G.edges(node))
-    #             # filtration_value = [filatration_value_dict[e] for e in edge]
-    #             # smallest = min(filtration_value)
-    #         #links = []
-    #         ng = self.original_M.rows[node]
-    #         ng.remove(node)
-    #         for i in range(len(ng)):
-    #             for j in range(i,len(ng)):
-    #                 if self.original_M[ng[i],ng[j]]:
-    #                     if (ng[i],ng[j]) in self.filtration_value_dict:
-    #                         smallest = min(self.filtration_value_dict[(ng[i],node )],self.filtration_value_dict[(ng[j],node )])
-    #                         # if smallest == 401:
-    #                         #     print(401)
-    #                         if  self.filtration_value_dict[(ng[i],ng[j])] > smallest:
-    #                             self.filtration_value_dict[(ng[i],ng[j])] = smallest
-    #                             self.filtration_value_dict[(ng[j],ng[i])] = smallest
-
-    def revise_strong_collapse_persistence(self):
-        for node,dominate_node in self.deleted_node_list.items():
-            
-            #self.original_M.rows[17]    
-                # edge = list(G.edges(node))
-                # filtration_value = [filatration_value_dict[e] for e in edge]
-                # smallest = min(filtration_value)
-            #links = []
-            ng = self.original_M.rows[node]
-            ng.remove(node)
-            for i in range(len(ng)):
-                for j in range(i,len(ng)):
-                    if self.original_M[ng[i],ng[j]]:
-                        if (ng[i],ng[j]) in self.filtration_value_dict:
-                            other_node = ng[i] if ng[j] == dominate_node else ng[j]
-                            if self.filtration_value_dict[(ng[i],ng[j])] > self.filtration_value_dict[(other_node,node)]:
-                                self.filtration_value_dict[(ng[i],ng[j])] = self.filtration_value_dict[(other_node,node)]
-                                self.filtration_value_dict[(ng[j],ng[i])] = self.filtration_value_dict[(other_node,node)]
-                            # if smallest == 401:
-                            # smallest = min(self.filtration_value_dict[(ng[i],node )],self.filtration_value_dict[(ng[j],node )])
-                            # if 
-
-    def revise_edge_collapse_persistence(self):
-        for e in self.deleted_edges:
-            filtration_value = self.filtration_value_dict[e]
-
-            dominate_node = self.deleted_edges[e]
-            #largest = max(filatration_value_dict[(dominate_node,e[0])],filatration_value_dict[(dominate_node,e[1])])
-            if self.filtration_value_dict[(dominate_node,e[0])] > filtration_value:
-                self.filtration_value_dict[(dominate_node,e[0])] = filtration_value
-                self.filtration_value_dict[(e[0],dominate_node)] = filtration_value
-            if self.filtration_value_dict[(dominate_node,e[1])] > filtration_value:
-                self.filtration_value_dict[(e[1],dominate_node)] = filtration_value
-                self.filtration_value_dict[(dominate_node,e[1])] = filtration_value
-        return
-    
-    def revise_inserted_edge(self):
-        node_dominate_edge = dict()
-        for e in self.inserted_edges:
-            if self.inserted_edges[e] not in node_dominate_edge:
-                node_dominate_edge[self.inserted_edges[e]] = [e]
-            else:
-                node_dominate_edge[self.inserted_edges[e]].append(e)
-
-        for e in self.inserted_edges:
-            
-
-            maximunm = max(self.filtration_value_dict[(e[0],self.inserted_edges[e])],self.filtration_value_dict[(e[1],self.inserted_edges[e])])
-            #print(e)
-            #print(self.inserted_edges[e])
-            self.filtration_value_dict[e] = maximunm
-            self.filtration_value_dict[(e[1],e[0])] = maximunm
-                        # else:
-                        #     filatration_value_dict[(ng[i], ng[j])] =  smallest
-                        #     filatration_value_dict[(ng[j], ng[i])] = smallest
-    
-        return
-    
-    def revise_inserted_edge_2_test(self):
-        node_dominate_edge = dict()
-        for e in self.inserted_edges:
-            if self.inserted_edges[e] not in node_dominate_edge:
-                node_dominate_edge[self.inserted_edges[e]] = [e]
-            else:
-                node_dominate_edge[self.inserted_edges[e]].append(e)
-        for n in node_dominate_edge:
-            if len(node_dominate_edge[n])>1:
-                for e in node_dominate_edge[n]:
-                    dominating_node = self.insert_dominated_node[n]
-                    other_node = e[1] if e[0] == dominating_node else e[0]
-                    self.filtration_value_dict[e] = self.filtration_value_dict[(n,other_node)]
-                    self.filtration_value_dict[(e[1],e[0])] = self.filtration_value_dict[(n,other_node)]
-            else:
-                for e in node_dominate_edge[n]:
-
-                    maximunm = max(self.filtration_value_dict[(e[0],self.inserted_edges[e])],self.filtration_value_dict[(e[1],self.inserted_edges[e])])
-                    #print(e)
-                    #print(self.inserted_edges[e])
-                    self.filtration_value_dict[e] = maximunm
-                    self.filtration_value_dict[(e[1],e[0])] = maximunm
-                            # else:
-                        #     filatration_value_dict[(ng[i], ng[j])] =  smallest
-                        #     filatration_value_dict[(ng[j], ng[i])] = smallest
-    
-        return
-    
-    def run_algorithm_preserve_homotopy(self):
-
-        while not self.finish and not self.finish1:
-
-            #if self.heruistic_delete == False:
-            st = time.time()
-            self.node_queue = deque(self.keep_nodes)
-            self.strong_collapse()
-
-            if self.finish == True:
-                break
-            else:
-                edges = self.get_all_edges()
-
-                self.edge_queue = deque(edges)
-                self.edge_collapse()
-                self.isfirst = False
-
-                if self.finish == True:
-                    break
-            if self.insert_dominated_edge==True: # no potential node after intert dominated edge
-
-                self.insert_dominated_edges_2()
-
-                print(f"insert dominated edge {self.num_remain_nodes}")
-                #self.draw_graph("collapse_1")
-                break
-        ed = time.time()
-        print(f"all collapse time {ed-st}")
-    # def run_algorithm_preserve_homotopy(self):
-    #
-    #
-    #     self.node_queue = deque(self.keep_nodes)
-    #     self.insert_dominated_edges_2()
-    #
-    #     print(f"insert dominated edge {self.num_remain_nodes}")
-    #     #self.draw_graph("collapse_1")
-    
-    # def run_strong_edge_collapse(self):
-
-    #     while not self.insert_dominated_edge:
-
-    #         #if self.heruistic_delete == False:
-    #         st = time.time()
-    #         self.node_queue = deque(self.keep_nodes)
-    #         self.strong_collapse()
-    #         self.revise_strong_collapse_persistence()
-    #         if self.finish == True:
-    #             break
-    #         else:
-    #             edges = self.get_all_edges()
-                
-    #             self.edge_queue = deque(edges)
-    #             self.edge_collapse()
-    #             self.revise_edge_collapse_persistence()
-    #             self.isfirst = False
-
-    #             if self.finish == True:
-    #                 break
-    #     ed = time.time()
-    #     print(f"all collapse time {ed-st}")
     def run_strong_edge_collapse(self):
 
-        tracemalloc.start()
+        #tracemalloc.start()
         st = time.time()
         self.node_queue = deque(self.keep_nodes)
-        self.strong_collapse()
-        #self.revise_strong_collapse_persistence()
-        #edges = self.get_all_edges()
-        
-        #self.edge_queue = deque(edges)
+        # while not self.finish :
+        #     self.strong_collapse()
+        #     if self.insert_dominated_edge == True:
+        #         break
+        #     else:
+        #         self.edge_collapse()
+        #         self.isfirst = False
+        #         if self.insert_dominated_edge == True:
+        #             break
         #self.edge_collapse()
-        #self.revise_edge_collapse_persistence()
-        if self.degree_threshold2 == 2:
-            self.insert_dominated_edges()
-        else:
-            self.insert_dominated_edges_2()
+        #self.insert_dominated_edges()
+        self.strong_collapse()
+        if self.degree_threshold2 > 0:
+            
+            self.edge_collapse()
+            if self.degree_threshold2 == 2:
+                    self.insert_dominated_edges()
+            else:
+                self.insert_dominated_edges_2()
+
+        # if self.insert_dominated_edge==True:
+        #     if self.degree_threshold2 == 2:
+        #         self.insert_dominated_edges()
+        #     else:
+        #         self.insert_dominated_edges_2()
+                
         #self.revise_inserted_edge_2_test()
 
-        
+        t1 = time.time()
         new_dict,new_edge,num_new_node = self.make_coarsened_graph()
         ed = time.time()
-        print(f"all collapse time {ed-st}")
+        print(f"make graph collapse time {t1-ed}")
 
-        current, peak = tracemalloc.get_traced_memory()
+        #current, peak = tracemalloc.get_traced_memory()
     
-        # peak = peak / 1024 ** 2
-        # tracemalloc.stop()
-        return new_dict,new_edge,num_new_node,peak
+        #peak = peak / 1024 ** 2
+        #tracemalloc.stop()
+        return new_dict,new_edge,num_new_node,0
+
+    def run_edge_collapse(self):
+
+        #tracemalloc.start()
+        st = time.time()
+        self.node_queue = deque(self.keep_nodes)
+        # while not self.finish :
+        #     self.strong_collapse()
+        #     if self.insert_dominated_edge == True:
+        #         break
+        #     else:
+        #         self.edge_collapse()
+        #         self.isfirst = False
+        #         if self.insert_dominated_edge == True:
+        #             break
+        self.strong_collapse()
+       
+
+        # if self.insert_dominated_edge==True:
+        #     if self.degree_threshold2 == 2:
+        #         self.insert_dominated_edges()
+        #     else:
+        #         self.insert_dominated_edges_2()
+                
+        #self.revise_inserted_edge_2_test()
+
+        t1 = time.time()
+        new_dict,new_edge,num_new_node = self.make_coarsened_graph()
+        ed = time.time()
+        print(f"make graph collapse time {t1-ed}")
+
+        #current, peak = tracemalloc.get_traced_memory()
+    
+        #peak = peak / 1024 ** 2
+        #tracemalloc.stop()
+        return new_dict,new_edge,num_new_node,0
 
 
         
