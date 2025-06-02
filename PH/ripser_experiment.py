@@ -194,7 +194,7 @@ def calculate_and_print_averages(results_list,dataname,k,k2):
 def main():
     parser = argparse.ArgumentParser()
     dataname = "REDDIT5k"
-    parser.add_argument("--dataset", type=str, required=False, help="dataset",default="REDDIT5k")
+    parser.add_argument("--dataset", type=str, required=False, help="dataset",default="oregon")
     parser.add_argument("--k", type=int, required=False, help="degree limit",default="6")
     parser.add_argument("--k2", type=int, required=False, help="degree limit",default="2")
     args = parser.parse_args()
@@ -276,7 +276,7 @@ def main():
 
     elif dataname == "oregon":
         graphs = []
-        root_dir = "/home/xwu/strong_collapse_PH/PH_dataset/oregon/"
+        root_dir = "./PH_dataset/oregon/"
         for subdir, _, files in os.walk(root_dir):
             
                 for file in files:
@@ -491,8 +491,8 @@ def main():
         #     continue
         data = nx.node_link_data(G)
         
-        with open("/home/xwu/strong_collapse/graph.json", "w") as f:
-            json.dump(data, f)
+        # with open("/home/xwu/strong_collapse/graph.json", "w") as f:
+        #     json.dump(data, f)
         
         
         distance_matrix = np.inf * np.ones((n, n))  # 初始化为无穷大
@@ -573,12 +573,14 @@ def main():
         # 创建 CSR 矩阵
         adj_matrix = csr_matrix((data, (rows, cols)), shape=(len(G.nodes), len(G.nodes)))
         adj_matrix = adj_matrix + eye(n, format='coo')
+        node_degree = np.diff(adj_matrix.indptr)
         adj_matrix = adj_matrix.tolil()
         adj_matrix = adj_matrix.astype(bool)
         keep_node = np.arange(n)
         node_label = np.zeros(n, dtype=int)
-        collapse = CoreAlgorithm(adj_matrix,0,keep_node,filatration_value_dict,0,keep_node,save=False,degree_threshold=args.k,degree_threshold2=args.k2)
         st = time.time()
+        collapse = CoreAlgorithm(adj_matrix,node_degree,filatration_value_dict,keep_node,0.1,save=False,degree_threshold=args.k,degree_threshold2=args.k2)
+        #st = time.time()
         new_filtration_value_dict,new_edge,num_new_node,peak_mem = collapse.run_strong_edge_collapse()
         deleted_node = collapse.deleted_node
         coarsened_graph_mat = collapse.M
