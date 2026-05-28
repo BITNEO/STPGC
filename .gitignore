@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+coarsened_graph/
+params/
+*.txt
+!requirements.txt
