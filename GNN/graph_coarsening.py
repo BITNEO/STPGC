@@ -1179,7 +1179,11 @@ class CoreAlgorithm:
         #             homo += 1
         # print(f"homo {homo/res.new_edge_index.shape[1]}")
         # 保存结果
-        filename = f'/home/wuxiang/strong_collapse/hyperparameter_study/{self.dataname}_{self.reduction_ratio:.2f}_{self.num_delete_hetero}_{self.args.deg1}_{self.args.deg2}split_All_Simplex_3.npy'
+        # 保存结果
+        import os
+        save_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'coarsened_graph')
+        os.makedirs(save_dir, exist_ok=True)
+        filename = os.path.join(save_dir, f'{self.dataname}_{self.reduction_ratio:.2f}.npy')
         np.save(filename, (res.cpu(), old_to_new))
         print(f"Saved to {filename}")
         f = open("./log.txt",'a')
@@ -1293,11 +1297,13 @@ if __name__ == "__main__":
                  'ogbn-arxiv':{0.5:[25,25,40000],0.3:[50,50,80000],0.2:[50,50,80000],0.1:[50,50,80000]},
                  'ogbn-products':{0.5:[100,100,0],0.3:[100,100,0],0.2:[100,100,0],0.1:[100,100,0]}}
 
-    para_dict_num_edge_01 = {'Cora':{0.5:[15,15,1000],0.3:[15,15,1000],0.2:[15,15,1000],0.1:[15,15,1000]},
-                               "Citeseer":{0.5:[15,15,910],0.3:[15,15,910],0.2:[15,15,910],0.1:[15,15,910]},
-                                  'dblp':{0.5:[10,10,0],0.3:[10,10,0],0.2:[10,10,0],0.1:[25,25,0]},
-                               'ogbn-arxiv':{0.5:[25,25,116624],0.3:[50,50,116624],0.2:[50,50,116624],0.1:[50,50,116624]},
-                               'ogbn-products':{0.5:[100,100,0],0.3:[100,100,0],0.2:[100,100,0],0.1:[100,100,0]}}
+    para_dict_num_edge_01 = {'Cora':{0.5:[15],0.3:[15],0.2:[15],0.1:[15]},
+                               "Citeseer":{0.5:[15],0.3:[15],0.2:[15],0.1:[15]},
+                                  'dblp':{0.5:[10],0.3:[10],0.2:[10],0.1:[25]},
+                               'ogbn-arxiv':{0.5:[25],0.3:[50],0.2:[50],0.1:[50]},
+                               'ogbn-products':{0.5:[100],0.3:[100],0.2:[100],0.1:[100]}}
+    # Datasets that delete heterophilic edges (10% of undirected edges)
+    DELETE_EDGE_DATASETS = {'Cora', 'Citeseer', 'ogbn-arxiv'}
 
     para_dict_APPNP = {'Cora':{0.5:[15,15,600],0.3:[15,15,2000],0.2:[15,15,200],0.1:[15,15,1000]},"Citeseer":{0.5:[15,15,900],0.3:[15,15,800],0.2:[15,15,700],0.1:[15,15,2000]}}
     degree_threshold =  {}
@@ -1311,22 +1317,21 @@ if __name__ == "__main__":
     args = parser.parse_args()
     dataset_name = args.dataname
     args.deg1 = para_dict_num_edge_01[args.dataname][args.ratio][0]
-    args.deg2 = para_dict_num_edge_01[args.dataname][args.ratio][1]
-    args.del_edge = para_dict_num_edge_01[args.dataname][args.ratio][2]
+    args.deg2 = args.deg1  # deg2 always equals deg1
     #print("dataname {}, ratio {}, deg1 {}, deg2 {}, del_edge {}".format(args.dataname,args.ratio,para_dict[args.dataname][args.ratio][0],para_dict[args.dataname][args.ratio][1],para_dict[args.dataname][args.ratio][2]))
     user = "wuxiang"
     if dataset_name == "Cora":
-        data = torch.load('/home/'+user+'/GEC-main/Cora/processed/data.pt')[0]
+        data = torch.load('./dataset/Cora/processed/data.pt')[0]
         edges = data['edge_index']
         label = data.y
     elif dataset_name == "dblp":
-        dataset = CitationFull(root='/home/'+user+'/main/dataset', name=dataset_name)
+        dataset = CitationFull(root='./dataset', name=dataset_name)
         data = dataset[0]
         
         edges = data['edge_index']
         label = data.y
     elif dataset_name == "Physics":
-        dataset = Coauthor(root='/home/wuxiang/main/dataset', name=dataset_name)
+        dataset = Coauthor(root='./dataset', name=dataset_name)
         data = dataset[0]
         label = data.y
         edges = data['edge_index']
@@ -1337,14 +1342,13 @@ if __name__ == "__main__":
         edges = data.edge_index
         label = data.y
     elif dataset_name == "pubmed":
-        # dataset = Planetoid(root='./dataset/pubmed', name='Pubmed')
-        # data = dataset[0]
-        data = torch.load('/home/'+user+'/STPGC/dataset/pubmed/processed/data.pt')[0]
+        dataset = Planetoid(root='./dataset/pubmed', name='Pubmed')
+        data = dataset[0]
         edges = data['edge_index']
         label = data['y']
     elif dataset_name == "ogbn-arxiv":
         dataset_path = './dataset/arxiv'
-        dataset = PygNodePropPredDataset(name='ogbn-arxiv', root='/home/'+user+'/strong_collapse/dataset/arxiv')
+        dataset = PygNodePropPredDataset(name='ogbn-arxiv', root='./dataset/arxiv')
         split_idx = dataset.get_idx_split()
         evaluator = Evaluator('ogbn-arxiv')
         data = dataset[0]
@@ -1423,20 +1427,18 @@ if __name__ == "__main__":
     adj = adj.tolil()
     print(adj.shape[0])
     adj = adj.astype(bool)
- 
-    
-    
+
+    # Calculate del_edge: 10% of undirected edges for delete-enabled datasets
+    if dataset_name in DELETE_EDGE_DATASETS:
+        from scipy.sparse import triu as sp_triu
+        num_undirected_edges = sp_triu(adj_matrix_sparse, k=1).nnz
+        args.del_edge = int(num_undirected_edges * 0.1)
+        print(f"del_edge = {args.del_edge} (10% of {num_undirected_edges} undirected edges)")
+    else:
+        args.del_edge = 0
+
     time_start = time.time()
-    # for num_edge in [100,200,500,1000]:
-    # #         # for v in [0.3, 0.5, 0.7, 0.8, 0.9]:
-    # #     for ratio in [0.5, 0.3,0.2,0.1]:
-    # #         # for v in [0.8, 0.9]:
-    # #         # for v in [ 0.9]:
-    #          for deg1 in  [10,15,20,25,30]:
-    args.deg1 = args.deg1
     args.deg2 = args.deg1
-# args.ratio = ratio
-    args.del_edge = args.del_edge
     collapse = CoreAlgorithm(adj,data,keep_nodes,args.ratio,label,args,save = True)
     if args.ratio == 1.0:
         collapse.make_coarsened_graph_old()
@@ -1451,58 +1453,3 @@ if __name__ == "__main__":
     print("remain nodes :{}".format(collapse.num_remain_nodes))
     #print("exact iter :{},relax iter {}".format(collapse.exact_iter,collapse.relax_iter))
 
-    # if args.compute_betti:
-    #     distance_matrix = np.inf * np.ones((num_nodes, num_nodes))
-    #     for e in collapse.remain_edges:
-            
-
-    #         distance_matrix[e[0],e[1]] = 1
-    #         distance_matrix[e[1],e[0]] = 1
-    #     betti1,collapse_time_pers_time,diagram1,mem  = compute_diagram_ripser(distance_matrix)
-    #     print(f"Betti 1 (环的数量): {betti1}")
-#     b1,b2,_ = collapse.compute_betti_numbers()
-#     print(f"Betti 1 (环的数量): {b1}")
-#     print(f"Betti 2 (空腔的数量): {b2}")
-# # st = gd.SimplexTree()
-# edges = collapse.get_all_edges()
-# for i,e in enumerate(edges):
-#     st.insert([e[0],e[1]], filtration=1)
-# result_str = 'Rips complex is of dimension ' + repr(st.dimension()) + ' - ' + \
-# repr(st.num_simplices()) + ' simplices - ' + \
-# repr(st.num_vertices()) + ' vertices.'
-# print(result_str)
-# fmt = '%s -> %.2f'
-# for filtered_value in st.get_filtration():
-#     print(fmt % tuple(filtered_value))
-# st.compute_persistence()
-
-# # 提取持久性图
-# diag = st.persistence_intervals_in_dimension(1)
-# print("持久性图:", diag)
-#_,new_map = np.load(f'./Reduced_Node_Data/{dataset_name}_0.30_split_All_Simplex_1.npy', allow_pickle=True)
-
-# for key,values in old_map.items():
-#     if old_map[i] != new_map[i]:
-#         print("error")
-#         break
-
-
-#num_collpsed_edges = np.count_nonzero(collapsed_M) 
-# filtered_adj_matrix = collapsed_M[~deleted_node, :]  # 删除行
-# filtered_adj_matrix = filtered_adj_matrix[:, ~deleted_node]
-# #print(num_collpsed_edges/2)
-
-# M = filtered_adj_matrix.copy() - np.eye(filtered_adj_matrix.shape[0])
-# vis_M = nx.from_numpy_array(M)
-# plt.figure(figsize=(10, 10))
-# nx.draw(vis_M, with_labels=True, node_color='lightblue', node_size=100, font_size=16)
-# plt.savefig("collapsed_graph_figure_final.png", format="png")
-
-
-
-
-# M = collapsed_M.copy() - np.eye(collapsed_M.shape[0])
-# vis_M = nx.from_numpy_array(M)
-# plt.figure(figsize=(10, 10))
-# nx.draw(vis_M, with_labels=True, node_color='lightblue', node_size=100, font_size=16)
-# plt.savefig("edge_collapsed_graph_figure_1.png", format="png")
