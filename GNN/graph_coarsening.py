@@ -193,10 +193,10 @@ class CoreAlgorithm:
                 if node_label[e[0]] == node_label[e[1]] :
                         homo += 1
 
-        if count > 0:
-            print(f"homo edge: {homo/count}")
-        else:
-            print("homo edge: N/A (no labeled edges)")
+        # if count > 0:
+        #     print(f"homo edge: {homo/count}")
+        # else:
+        #     print("homo edge: N/A (no labeled edges)")
 
         delete = 0
         new_set = self.remain_edges.copy()
@@ -229,60 +229,7 @@ class CoreAlgorithm:
         self.homo_ratio = homo/count
         return
 
-    def swap_mis_label_any_node(self,old_to_new, new_to_old,adj_matrix_sparse):
-        supernode_label = dict()
-        label_list = dict()
-        total_label_count = 0
-        for key,value in new_to_old.items():
-            value_filtered = [v for v in value if not self.test_mask[v]]
-            label_list[key] = self.label[value_filtered]
-            total_label_count += len(label_list[key])
-        print(f"total label {total_label_count}")
-        for key,value in label_list.items():
-            if len(value) == 0:
-                supernode_label[key] = 0
-                continue
-            values, counts = np.unique(value, return_counts=True)
-            # Find the most frequent element
-            max_label = values[np.argmax(counts)]
-            supernode_label[key] = max_label
-
-        mis_label_count = 0
-        for key,value in label_list.items():
-            for label in value:
-                if label != supernode_label[key]:
-                    mis_label_count += 1
-
-        print(f"mis percentage {mis_label_count/total_label_count}")
-
-        label_to_node = {}
-        for k,value in supernode_label.items():
-            if value not in label_to_node:
-                label_to_node[value] =  [k]
-            else:
-                label_to_node[value].append(k)
-
-        for key,value in new_to_old.items():
-            value_filtered = [v for v in value if not self.test_mask[v]]
-            for v in value_filtered:
-                if self.label[v] != supernode_label[key]:
-                    random_supernode = np.random.choice(label_to_node[self.label[v]])
-                    old_to_new[v] = random_supernode
-                    new_to_old[random_supernode].append(v)
-                    new_to_old[key].remove(v)
-                    break
-        label_list = dict()
-        for key,value in new_to_old.items():
-            value_filtered = [v for v in value if not self.test_mask[v]]
-            label_list[key] = self.label[value_filtered]
-
-        mis_label_count = 0
-        for key,value in label_list.items():
-            for label in value:
-                if label != supernode_label[key]:
-                    mis_label_count += 1
-        print(f"revised mis percentage {mis_label_count/total_label_count}")
-        return old_to_new,new_to_old,label_list,supernode_label
+    
 
     def sorted_list_intersection_with_deleted_set(self, list1, list2,e):
         intersection = np.empty(len(list1),dtype=int)
@@ -801,18 +748,12 @@ class CoreAlgorithm:
             self.relax_iter = index
             self.make_coarsened_graph_old()
 if __name__ == "__main__":
-    para_dict = {'Cora':{0.5:[15,15,400],0.3:[15,15,500],0.2:[15,15,0],0.1:[15,15,0]},
-                 "Citeseer":{0.5:[15,15,1000],0.3:[15,15,2000],0.2:[15,15,700],0.1:[15,15,2000]},
-                    'dblp':{0.5:[10,10,0],0.3:[10,10,0],0.2:[10,10,0],0.1:[25,25,0]},
-                 'ogbn-arxiv':{0.5:[25,25,40000],0.3:[50,50,80000],0.2:[50,50,80000],0.1:[50,50,80000]},
-                 'ogbn-products':{0.5:[100,100,0],0.3:[100,100,0],0.2:[100,100,0],0.1:[100,100,0]}}
 
     para_dict_num_edge_01 = {'Cora':{0.5:[15],0.3:[15],0.2:[15],0.1:[15]},
                                "Citeseer":{0.5:[15],0.3:[15],0.2:[15],0.1:[15]},
                                   'dblp':{0.5:[10],0.3:[10],0.2:[10],0.1:[25]},
                                'ogbn-arxiv':{0.5:[25],0.3:[50],0.2:[50],0.1:[50]},
                                'ogbn-products':{0.5:[100],0.3:[100],0.2:[100],0.1:[100]}}
-    # Datasets that delete heterophilic edges (10% of undirected edges)
     DELETE_EDGE_DATASETS = {'Cora', 'Citeseer', 'ogbn-arxiv'}
 
     para_dict_APPNP = {'Cora':{0.5:[15,15,600],0.3:[15,15,2000],0.2:[15,15,200],0.1:[15,15,1000]},"Citeseer":{0.5:[15,15,900],0.3:[15,15,800],0.2:[15,15,700],0.1:[15,15,2000]}}
@@ -828,9 +769,9 @@ if __name__ == "__main__":
     dataset_name = args.dataname
     args.deg1 = para_dict_num_edge_01[args.dataname][args.ratio][0]
     args.deg2 = args.deg1  # deg2 always equals deg1
-    user = "wuxiang"
+  
     if dataset_name == "Cora":
-        data = torch.load('./dataset/Cora/processed/data.pt')[0]
+        data = torch.load('./dataset/Cora/processed/data.pt', weights_only=False)[0]
         edges = data['edge_index']
         label = data.y
     elif dataset_name == "dblp":
@@ -931,7 +872,6 @@ if __name__ == "__main__":
     print(adj.shape[0])
     adj = adj.astype(bool)
 
-    # Calculate del_edge: 10% of undirected edges for delete-enabled datasets
     if dataset_name in DELETE_EDGE_DATASETS:
         from scipy.sparse import triu as sp_triu
         num_undirected_edges = sp_triu(adj_matrix_sparse, k=1).nnz
