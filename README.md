@@ -45,8 +45,8 @@ If you find this repository useful, please consider citing:
 ```bibtex
 @inproceedings{wu2026stpgc,
   title={Scalable Topology-Preserving Graph Coarsening: Concepts and Algorithms},
-  author={Xiang Wu, ⋅ Rong-Hua Li, ⋅ Xunkai Li, ⋅ Kangfei Zhao, ⋅
-  Hongchao Qin, and ⋅ Guoren Wang},
+  author={Xiang Wu, Rong-Hua Li, Xunkai Li, Kangfei Zhao,
+  Hongchao Qin, and Guoren Wang},
   booktitle={International Conference on Machine Learning},
   year={2026}
 }
