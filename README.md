@@ -5,18 +5,9 @@ This repository is the official code implementation for the paper:
 **Scalable Topology-Preserving Graph Coarsening: Concepts and Algorithms**
 *ICML 2026*
 
-### Citation
 
-If you find this work useful, please cite our paper:
 
-```bibtex
-@inproceedings{wu2026stpgc,
-  title={Scalable Topology-Preserving Graph Coarsening: Concepts and Algorithms},
-  author={Wu, Xiang},
-  booktitle={International Conference on Machine Learning},
-  year={2026}
-}
-```
+
 
 ### Usage
 
@@ -49,5 +40,15 @@ Key arguments:
 - `--lr`: Learning rate (default: 0.01)
 
 
+If you find this repository useful, please consider citing:
 
+```bibtex
+@inproceedings{wu2026stpgc,
+  title={Scalable Topology-Preserving Graph Coarsening: Concepts and Algorithms},
+  author={Xiang Wu, ⋅ Rong-Hua Li, ⋅ Xunkai Li, ⋅ Kangfei Zhao, ⋅
+  Hongchao Qin, and ⋅ Guoren Wang},
+  booktitle={International Conference on Machine Learning},
+  year={2026}
+}
+```
 
