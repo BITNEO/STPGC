@@ -1,9 +1,22 @@
 ## STPGC: Strong Topology-Preserving Graph Coarsening
 
-This repository implements the STPGC method for graph coarsening that preserves topological structures of the original graph, along with GCN training on the coarsened graph.
+This repository is the official code implementation for the paper:
 
+**Scalable Topology-Preserving Graph Coarsening: Concepts and Algorithms**
+*ICML 2026*
 
+### Citation
 
+If you find this work useful, please cite our paper:
+
+```bibtex
+@inproceedings{wu2026stpgc,
+  title={Scalable Topology-Preserving Graph Coarsening: Concepts and Algorithms},
+  author={Wu, Xiang},
+  booktitle={International Conference on Machine Learning},
+  year={2026}
+}
+```
 
 ### Usage
 
