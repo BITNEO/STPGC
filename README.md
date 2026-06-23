@@ -1,4 +1,3 @@
-## STPGC: Strong Topology-Preserving Graph Coarsening
 
 This repository is the official code implementation for the paper:
 
